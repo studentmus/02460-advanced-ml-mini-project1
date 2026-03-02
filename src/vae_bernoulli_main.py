@@ -7,6 +7,20 @@ import matplotlib.pyplot as plt
 from scipy import stats
 from tqdm import tqdm
 
+class MoGPrior(nn.Module):
+    def __init__(self, M, K):
+        super().__init__()
+        self.M = M
+        self.K = K
+        self.mu = nn.Parameter(torch.randn(K, M) * 2.0)
+        self.log_std = nn.Parameter(torch.zeros(K, M) - 0.5)
+        self.logits = nn.Parameter(torch.zeros(K))
+
+    def forward(self):
+        mix = td.Categorical(logits=self.logits)
+        comp = td.Independent(td.Normal(self.mu, torch.exp(self.log_std)), 1)
+        return td.MixtureSameFamily(mix, comp)
+
 
 class GaussianPrior(nn.Module):
     def __init__(self, M):
@@ -293,6 +307,9 @@ if __name__ == "__main__":
     parser.add_argument('--epochs', type=int, default=10, metavar='N', help='number of epochs to train (default: %(default)s)')
     parser.add_argument('--latent-dim', type=int, default=32, metavar='N', help='dimension of latent variable (default: %(default)s)')
     parser.add_argument("--no-trains", type=int, default = 10, metavar="N", help="Number of training you want to runs, default is %(default)")
+    parser.add_argument("--prior", type=str, default = "std_Gauss", choices = ['std_Gauss', 'mog', 'flow'],
+                                            help = "Choose your prior distribution from %(choices), default is %(default)")
+    parser.add_argument("--k", type = int, default = 10, help = "Number of Gaussian distributions for MoG, if chosen prior = MoG")
 
     args = parser.parse_args()
     print('# Options')
@@ -304,10 +321,10 @@ if __name__ == "__main__":
     # Load MNIST as binarized at 'thresshold' and create data loaders
     thresshold = 0.5
     mnist_train_loader = torch.utils.data.DataLoader(datasets.MNIST('data/', train=True, download=True,
-                                                        transform=transforms.Compose([transforms.ToTensor(), transforms.Lambda(lambda x: (thresshold < x).float())])),
+                                                        transform=transforms.Compose([transforms.ToTensor(), transforms.Lambda(lambda x: (thresshold < x).float().squeeze())])),
                                         batch_size=args.batch_size, shuffle=True)
     mnist_test_loader = torch.utils.data.DataLoader(datasets.MNIST('data/', train=False, download=True,
-                                                    transform=transforms.Compose([transforms.ToTensor(), transforms.Lambda(lambda x: (thresshold < x).float())])),
+                                                    transform=transforms.Compose([transforms.ToTensor(), transforms.Lambda(lambda x: (thresshold < x).float().squeeze())])),
                                         batch_size=args.batch_size, shuffle=True)
 
     # Choose mode to run
@@ -317,7 +334,10 @@ if __name__ == "__main__":
 
         # Define prior distribution
         M = args.latent_dim
-        prior = GaussianPrior(M)
+        if args.prior == "std_Gauss":
+            prior = GaussianPrior(M)
+        elif args.prior == "mog":
+            prior = MoGPrior(M, args.k)
 
         for i in range(no_trains):
 
@@ -393,10 +413,10 @@ if __name__ == "__main__":
         model = VAE(prior, decoder, encoder).to(device)
 
         # Define optimizer
-        optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
+        # optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
 
         # Train model
-        train(model, optimizer, mnist_train_loader, args.epochs, args.device)
+        # train(model, optimizer, mnist_train_loader, args.epochs, args.device)
         model.load_state_dict(torch.load(args.model, map_location=torch.device(args.device)))
 
         # Generate samples
@@ -404,4 +424,4 @@ if __name__ == "__main__":
         with torch.no_grad():
             samples = (model.sample(64)).cpu()
             save_image(samples.view(64, 1, 28, 28), args.samples)
-            plot_latent_with_labels(model, mnist_test_loader, args.device, max_batches=32)
+            plot_latent_with_labels(model, mnist_test_loader, args.device, max_batches=32, filename="latent_contour_2_another.png")

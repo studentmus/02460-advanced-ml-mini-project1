@@ -85,7 +85,8 @@ class BernoulliDecoder(nn.Module):
            A tensor of dimension `(batch_size, M)`, where M is the dimension of the latent space.
         """
         logits = self.decoder_net(z)
-        return td.Independent(td.Bernoulli(logits=logits), 2)
+        # print(logits.shape)
+        return td.Independent(td.Bernoulli(logits=logits), 3)
 
 
 class VAE(nn.Module):
@@ -120,6 +121,10 @@ class VAE(nn.Module):
         """
         q = self.encoder(x)
         z = q.rsample()
+        # print("FUCK!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
+        # print(q.shape)
+        # print(z.shape)
+        # print(self.decoder(z).log_prob(x).shape)
         elbo = torch.mean(self.decoder(z).log_prob(x) - td.kl_divergence(q, self.prior()), dim=0)
         return elbo
 
@@ -232,7 +237,7 @@ def evaluate_elbo(model, device):
     total_elbo = 0
 
     data_loader = torch.utils.data.DataLoader(datasets.MNIST('data/', train=False, download=True,
-                                    transform=transforms.Compose([transforms.ToTensor(), transforms.Lambda(lambda x: (thresshold < x).float().squeeze())])),
+                                    transform=transforms.Compose([transforms.ToTensor(), transforms.Lambda(lambda x: (thresshold < x).float())])),
                                     batch_size=32 * 313, shuffle=True)
     with torch.no_grad():
         for x in data_loader:
@@ -391,14 +396,14 @@ if __name__ == "__main__":
 
             # Train model
             train(model, optimizer, mnist_train_loader, args.epochs, args.device)
+            # Save model
+            if (no_trains - i) == 1:
+                torch.save(model.state_dict(), args.model)
+
             elbo = evaluate_elbo(model, args.device)
             elbos.append(elbo)
             print(f"ELBO of the training {i}th is {elbo}")
             print("-------------------------------------------------------------------------------------------------")
-
-            # Save model
-            if (no_trains - i) == 1:
-                torch.save(model.state_dict(), args.model)
         elbos = np.array(elbos)
 
         mean = elbos.mean()
@@ -412,21 +417,42 @@ if __name__ == "__main__":
 
         # Define encoder and decoder networks
         encoder_net = nn.Sequential(
+            nn.Conv2d(1, 32, 3, stride=2, padding=1),
+            nn.BatchNorm2d(32),
+            nn.ReLU(),
+            nn.Conv2d(32, 64, 3, stride=2, padding=1),
+            nn.BatchNorm2d(64),
+            nn.ReLU(),
+            # nn.Conv2d(64, 128, 3, stride=2, padding=1),
+            # nn.BatchNorm2d(128),
+            # nn.ReLU(),
+            # nn.Conv2d(128, 256, 3, stride=2, padding=1),
+            # nn.BatchNorm2d(256),
+            # nn.ReLU(),
+            # nn.Conv2d(512, 512, 3, stride=2, padding=1),
+            # nn.BatchNorm2d(512),
+            # nn.ReLU(),
             nn.Flatten(),
-            nn.Linear(784, 512),
+            nn.Linear(64 * 7 * 7, 512),
             nn.ReLU(),
-            nn.Linear(512, 512),
-            nn.ReLU(),
+            # nn.Linear(512, 512),
+            # nn.ReLU(),
             nn.Linear(512, M * 2),
         )
 
         decoder_net = nn.Sequential(
             nn.Linear(M, 512),
             nn.ReLU(),
-            nn.Linear(512, 512),
+            nn.Linear(512, 64 * 7 * 7),
             nn.ReLU(),
-            nn.Linear(512, 784),
-            nn.Unflatten(-1, (28, 28))
+
+            nn.Unflatten(1, (64, 7, 7)),
+
+            nn.ConvTranspose2d(64, 32, 3, stride=2, padding=1, output_padding=1),  # 7→14
+            nn.BatchNorm2d(32),
+            nn.ReLU(),
+
+            nn.ConvTranspose2d(32, 1, 3, stride=2, padding=1, output_padding=1),  # 14→28
         )
 
         # Define VAE model
@@ -436,9 +462,6 @@ if __name__ == "__main__":
 
         # Define optimizer
         optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
-
-        # Train model
-        train(model, optimizer, mnist_train_loader, args.epochs, args.device)
         model.load_state_dict(torch.load(args.model, map_location=torch.device(args.device)))
 
         # Generate samples
