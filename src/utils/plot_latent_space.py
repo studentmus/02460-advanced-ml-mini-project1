@@ -13,24 +13,31 @@ def main():
     parser = argparse.ArgumentParser(description="Plot Latent Space Distributions")
     parser.add_argument("--beta", type=float, default=1e-6, help="Beta value of the model to load")
     parser.add_argument("--num_batches", type=int, default=20, help="Number of batches for the scatter plot")
+    
+    parser.add_argument("--weights_dir", type=str, default="weights_100vae50ddpm", help="Directory containing the model weights")
+    parser.add_argument("--output_dir", type=str, default="plots_100vae50ddpm", help="Directory to save the output plots")
+    
     args = parser.parse_args()
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"Using device: {device} | Loading models for Beta: {args.beta}")
+    print(f"Using device: {device} | Loading models for Beta: {args.beta} from {args.weights_dir}")
 
-    # MUST be 2 for this specific contour visualization!
+    # MUST be 2 for this specific contour visualization
     latent_dim = 2 
     
     b_vae = BetaVAE(latent_dim=latent_dim).to(device)
     latent_net = LatentMLP(latent_dim=latent_dim).to(device)
     latent_ddpm = DDPM(network=latent_net, T=1000).to(device)
 
+    b_vae_path = os.path.join(args.weights_dir, f"b_vae_beta_{args.beta}.pth")
+    ddpm_path = os.path.join(args.weights_dir, f"latent_ddpm_beta_{args.beta}.pth")
+
     # Load weights
     try:
-        b_vae.load_state_dict(torch.load(f"weights_100vae50ddpm/b_vae_beta_{args.beta}.pth", map_location=device))
-        latent_ddpm.load_state_dict(torch.load(f"weights_100vae50ddpm/latent_ddpm_beta_{args.beta}.pth", map_location=device))
-    except FileNotFoundError:
-        print("Weights not found. Please run your training script first.")
+        b_vae.load_state_dict(torch.load(b_vae_path, map_location=device, weights_only=True))
+        latent_ddpm.load_state_dict(torch.load(ddpm_path, map_location=device, weights_only=True))
+    except FileNotFoundError as e:
+        print(f"Weights not found: {e}\nPlease check your weights directory path.")
         return
 
     b_vae.eval()
@@ -106,10 +113,8 @@ def main():
     
     plt.tight_layout() 
 
-    # Save logic
-    output_dir = "plots_100vae50ddpm"
-    os.makedirs(output_dir, exist_ok=True)
-    filename = os.path.join(output_dir, f"latent_distributions_beta_{args.beta}.png")
+    os.makedirs(args.output_dir, exist_ok=True)
+    filename = os.path.join(args.output_dir, f"latent_distributions_beta_{args.beta}.png")
     
     plt.savefig(filename, bbox_inches='tight')
     print(f"Success! Saved latent space plot to {filename}")

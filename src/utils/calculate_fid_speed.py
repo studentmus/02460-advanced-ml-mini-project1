@@ -1,3 +1,4 @@
+import os
 import time
 import argparse
 import torch
@@ -14,10 +15,14 @@ def main():
                         help="Beta value (only used if model is latent_ddpm or vae)")
     parser.add_argument("--num_samples", type=int, default=2000, 
                         help="Number of samples to generate for FID calculation (default: 2000)")
+    parser.add_argument("--weights_dir", type=str, default="weights", 
+                        help="Directory containing the model weights")
+    
     args = parser.parse_args()
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device} | Evaluating Model: {args.model}")
+    print(f"Loading weights from directory: {args.weights_dir}")
 
     # 1. Load Real Images
     transform = transforms.Compose([
@@ -41,7 +46,9 @@ def main():
         if args.model == "ddpm":
             unet = Unet().to(device)
             ddpm = DDPM(network=unet, T=1000).to(device)
-            ddpm.load_state_dict(torch.load("weights/trained_ddpm_mnist_100epochs.pth", map_location=device))
+            
+            ddpm_path = os.path.join(args.weights_dir, "trained_ddpm_mnist_100epochs.pth")
+            ddpm.load_state_dict(torch.load(ddpm_path, map_location=device, weights_only=True))
             ddpm.eval()
             
             print(f"Generating {args.num_samples} samples from standard DDPM...")
@@ -61,8 +68,11 @@ def main():
             latent_net = LatentMLP(latent_dim=latent_dim).to(device)
             latent_ddpm = DDPM(network=latent_net, T=1000).to(device)
             
-            b_vae.load_state_dict(torch.load(f"weightsL20_100vae50ddpm/b_vae_beta_{args.beta}.pth", map_location=device))
-            latent_ddpm.load_state_dict(torch.load(f"weightsL20_100vae50ddpm/latent_ddpm_beta_{args.beta}.pth", map_location=device))
+            vae_path = os.path.join(args.weights_dir, f"b_vae_beta_{args.beta}.pth")
+            latent_ddpm_path = os.path.join(args.weights_dir, f"latent_ddpm_beta_{args.beta}.pth")
+            
+            b_vae.load_state_dict(torch.load(vae_path, map_location=device, weights_only=True))
+            latent_ddpm.load_state_dict(torch.load(latent_ddpm_path, map_location=device, weights_only=True))
             b_vae.eval()
             latent_ddpm.eval()
 
@@ -81,7 +91,10 @@ def main():
         elif args.model == "vae":
             latent_dim = 20
             b_vae = BetaVAE(latent_dim=latent_dim).to(device)
-            b_vae.load_state_dict(torch.load(f"weights/b_vae_beta_{args.beta}.pth", map_location=device))
+            
+            vae_path = os.path.join(args.weights_dir, f"b_vae_beta_{args.beta}.pth")
+            
+            b_vae.load_state_dict(torch.load(vae_path, map_location=device, weights_only=True))
             b_vae.eval()
 
             print(f"Generating {args.num_samples} samples directly from VAE prior (beta={args.beta})...")
@@ -105,6 +118,8 @@ def main():
 
     # 3. Compute FID
     print("Computing Fréchet Inception Distance...")
+
+    
 
     fid_score = compute_fid(
         x_real=real_images, 
