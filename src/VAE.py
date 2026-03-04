@@ -38,22 +38,26 @@ class MoGPrior(BasePrior):
 
     def __init__(self, M, K):
         super().__init__()
+
         self.mu = nn.Parameter(torch.randn(K, M) * 2.0)
         self.log_std = nn.Parameter(torch.zeros(K, M) - 0.5)
         self.logits = nn.Parameter(torch.zeros(K))
 
     def _dist(self):
+
         mix = td.Categorical(logits=self.logits)
+
         comp = td.Independent(
             td.Normal(self.mu, torch.exp(self.log_std)), 1
         )
+
         return td.MixtureSameFamily(mix, comp)
 
     def log_prob(self, z):
         return self._dist().log_prob(z)
 
     def sample(self, n):
-        return self._dist().sample((n,))
+        return self._dist().sample((n,)).to(self.mu.device)
 
 # ===============================
 # Flow Components
@@ -96,13 +100,16 @@ class CouplingLayer(nn.Module):
 
         return z_out, log_det
 
-class FlowPrior(nn.Module):
+class FlowPrior(BasePrior):
 
     def __init__(self, dim=2, n_layers=6):
 
         super().__init__()
 
         self.dim = dim
+
+        self.register_buffer("base_loc", torch.zeros(dim))
+        self.register_buffer("base_scale", torch.ones(dim))
 
         masks = []
 
@@ -120,8 +127,10 @@ class FlowPrior(nn.Module):
             [CouplingLayer(dim, m) for m in masks]
         )
 
-        self.base = td.Independent(
-            td.Normal(torch.zeros(dim), torch.ones(dim)), 1
+    def _base_dist(self):
+
+        return td.Independent(
+            td.Normal(self.base_loc, self.base_scale), 1
         )
 
     def log_prob(self, z):
@@ -132,7 +141,7 @@ class FlowPrior(nn.Module):
 
         for layer in reversed(self.layers):
 
-            mask = layer.mask.to(z.device)
+            mask = layer.mask
 
             u_masked = u * mask
 
@@ -143,11 +152,11 @@ class FlowPrior(nn.Module):
 
             log_det_total -= (s * (1 - mask)).sum(dim=-1)
 
-        return self.base.log_prob(u) + log_det_total
+        return self._base_dist().log_prob(u) + log_det_total
 
     def sample(self, n):
 
-        u = self.base.sample((n,)).to(next(self.parameters()).device)
+        u = self._base_dist().sample((n,)).to(self.base_loc.device)
 
         z = u
 
