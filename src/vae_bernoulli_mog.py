@@ -16,9 +16,9 @@ class MoGPrior(nn.Module):
         super().__init__()
         self.M = M
         self.K = K
-        self.mu = nn.Parameter(torch.randn(K, M) * 2.0, requires_grad=False)
-        self.log_std = nn.Parameter(torch.zeros(K, M) - 0.5, requires_grad=False)
-        self.logits = nn.Parameter(torch.zeros(K), requires_grad=False)
+        self.mu = nn.Parameter(torch.randn(K, M) * 2.0)
+        self.log_std = nn.Parameter(torch.zeros(K, M) - 0.5)
+        self.logits = nn.Parameter(torch.zeros(K))
 
     def forward(self):
         mix = td.Categorical(logits=self.logits)
@@ -243,8 +243,8 @@ if __name__ == "__main__":
 
     elbos = []
 
-    for i in range(10):
-        M = 2
+    for i in range(1):
+        M = 20
         K = 10
 
         prior = MoGPrior(M, K).to(device)  # use this code if u want prior
@@ -282,9 +282,9 @@ if __name__ == "__main__":
         print(f"ELBO of the training {i}th is {elbo}")
         print("-------------------------------------------------------------------------------------------------")
 
-        if 10 - i == 1:
+        if 1 - i == 1:
             os.makedirs("models", exist_ok=True)
-            torch.save(model.state_dict(), "models/VAE_MoG_not_trainable_prior.pt")
+            torch.save(model.state_dict(), "models/VAE_MoG_latent_20.pt")
 
     elbos = np.array(elbos)
 
