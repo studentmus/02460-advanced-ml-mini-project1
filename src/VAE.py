@@ -262,7 +262,7 @@ class BernoulliDecoder(nn.Module):
         logits = self.decoder_net(z)
         return td.Independent(td.Bernoulli(logits=logits), 2)
 
-def plot_latent_contours(prior, model, loader, device,
+def plot_latent_contours(prior, prior_name, model, loader, device,
                          lim=6, grid=300, levels=15,
                          n_points=5000, use_mean=False,
                          alpha=0.6, s=8):
@@ -339,10 +339,10 @@ def plot_latent_contours(prior, model, loader, device,
     plt.ylabel("z2")
     plt.grid(True)
 
-    plt.savefig("figs/latent_contours.png")
+    plt.savefig(f"figs/{prior_name}_latent_contours.png")
     plt.close()
 
-def show_reconstructions(model, loader, device, n=10, thr=0.5):
+def show_reconstructions(model, loader, device, prior, n=10, thr=0.5):
 
     model.eval()
 
@@ -374,7 +374,7 @@ def show_reconstructions(model, loader, device, n=10, thr=0.5):
 
     plt.suptitle("Top: Original | Bottom: Reconstruction")
 
-    plt.savefig("figs/reconstruction.png")
+    plt.savefig(f"samples/{prior}_reconstruction.png")
     plt.close()
 
 def main():
@@ -533,13 +533,13 @@ def main():
     print("===================================")
 
     os.makedirs("models", exist_ok=True)
-    os.makedirs("figs", exist_ok=True)
+    os.makedirs("samples", exist_ok=True)
 
     torch.save(model.state_dict(), f"models/VAE_{args.prior}.pt")
 
-    plot_latent_contours(prior, model, test_loader, device)
+    plot_latent_contours(prior, args.prior, model, test_loader, device)
 
-    show_reconstructions(model, test_loader, device, args.samples)
+    show_reconstructions(model, test_loader, device, prior=args.prior, n=args.samples)
 
 if __name__ == "__main__":
     main()

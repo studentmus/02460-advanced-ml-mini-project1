@@ -119,7 +119,6 @@ def main():
     # 3. Compute FID
     print("Computing Fréchet Inception Distance...")
 
-    
 
     fid_score = compute_fid(
         x_real=real_images, 
