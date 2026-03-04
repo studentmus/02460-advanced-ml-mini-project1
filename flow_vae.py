@@ -1,250 +1,396 @@
-{
- "cells": [
-  {
-   "cell_type": "code",
-   "execution_count": null,
-   "id": "c334031d-2bec-4d29-9868-48e770bc3d5f",
-   "metadata": {},
-   "outputs": [],
-   "source": [
-    "import os\n",
-    "import numpy as np\n",
-    "import torch\n",
-    "import torch.nn as nn\n",
-    "import torch.distributions as td\n",
-    "from torch.utils.data import DataLoader\n",
-    "from torchvision import datasets, transforms\n",
-    "import matplotlib.pyplot as plt\n",
-    "\n",
-    "# Setup device and hyperparameters\n",
-    "device = torch.device(\"cuda\" if torch.cuda.is_available() else \"cpu\")\n",
-    "M = 2\n",
-    "BATCH_SIZE = 256\n",
-    "N_RUNS = 10\n",
-    "EPOCHS = 50\n",
-    "THRESHOLD = 0.5\n",
-    "\n",
-    "# Prepare output directories\n",
-    "os.makedirs(\"models\", exist_ok=True)\n",
-    "os.makedirs(\"figs\", exist_ok=True)\n",
-    "\n",
-    "# Data loading and binarization\n",
-    "transform = transforms.Compose([\n",
-    "    transforms.ToTensor(),\n",
-    "    transforms.Lambda(lambda x: (x > THRESHOLD).float().squeeze())\n",
-    "])\n",
-    "\n",
-    "train_loader = DataLoader(\n",
-    "    datasets.MNIST(\"data/\", train=True, download=True, transform=transform),\n",
-    "    batch_size=BATCH_SIZE, shuffle=True\n",
-    ")\n",
-    "\n",
-    "test_loader = DataLoader(\n",
-    "    datasets.MNIST(\"data/\", train=False, download=True, transform=transform),\n",
-    "    batch_size=BATCH_SIZE, shuffle=False\n",
-    ")\n",
-    "\n",
-    "# --- Model Components ---\n",
-    "\n",
-    "class CouplingLayer(nn.Module):\n",
-    "    def __init__(self, dim, mask):\n",
-    "        super().__init__()\n",
-    "        self.register_buffer(\"mask\", mask)\n",
-    "        self.scale_net = nn.Sequential(\n",
-    "            nn.Linear(dim, 64), nn.ReLU(),\n",
-    "            nn.Linear(64, 64), nn.ReLU(),\n",
-    "            nn.Linear(64, dim), nn.Tanh()\n",
-    "        )\n",
-    "        self.shift_net = nn.Sequential(\n",
-    "            nn.Linear(dim, 64), nn.ReLU(),\n",
-    "            nn.Linear(64, 64), nn.ReLU(),\n",
-    "            nn.Linear(64, dim)\n",
-    "        )\n",
-    "\n",
-    "    def forward(self, z):\n",
-    "        z_masked = z * self.mask\n",
-    "        s = self.scale_net(z_masked) * (1 - self.mask)\n",
-    "        t = self.shift_net(z_masked) * (1 - self.mask)\n",
-    "        z_out = z_masked + (1 - self.mask) * (z * torch.exp(s) + t)\n",
-    "        log_det = (s * (1 - self.mask)).sum(dim=-1)\n",
-    "        return z_out, log_det\n",
-    "\n",
-    "class FlowPrior(nn.Module):\n",
-    "    def __init__(self, dim=2, n_layers=6):\n",
-    "        super().__init__()\n",
-    "        self.dim = dim\n",
-    "        masks = []\n",
-    "        for i in range(n_layers):\n",
-    "            m = torch.zeros(dim)\n",
-    "            m[:dim // 2] = 1.0\n",
-    "            if i % 2 == 1:\n",
-    "                m = 1 - m\n",
-    "            masks.append(m)\n",
-    "        self.layers = nn.ModuleList([CouplingLayer(dim, m) for m in masks])\n",
-    "        self.base = td.Independent(td.Normal(torch.zeros(dim), torch.ones(dim)), 1)\n",
-    "\n",
-    "    def log_prob(self, z):\n",
-    "        log_det_total = torch.zeros(z.shape[0], device=z.device)\n",
-    "        u = z\n",
-    "        for layer in reversed(self.layers):\n",
-    "            u_masked = u * layer.mask.to(z.device)\n",
-    "            s = layer.scale_net(u_masked) * (1 - layer.mask.to(z.device))\n",
-    "            t = layer.shift_net(u_masked) * (1 - layer.mask.to(z.device))\n",
-    "            u = u_masked + (1 - layer.mask.to(z.device)) * ((u - t) * torch.exp(-s))\n",
-    "            log_det_total -= (s * (1 - layer.mask.to(z.device))).sum(dim=-1)\n",
-    "        return self.base.log_prob(u) + log_det_total\n",
-    "\n",
-    "    def sample(self, n):\n",
-    "        u = self.base.sample((n,)).to(next(self.parameters()).device)\n",
-    "        z = u\n",
-    "        for layer in self.layers:\n",
-    "            z_masked = z * layer.mask\n",
-    "            s = layer.scale_net(z_masked) * (1 - layer.mask)\n",
-    "            t = layer.shift_net(z_masked) * (1 - layer.mask)\n",
-    "            z = z_masked + (1 - layer.mask) * (z * torch.exp(s) + t)\n",
-    "        return z\n",
-    "\n",
-    "class GaussianEncoder(nn.Module):\n",
-    "    def __init__(self, encoder_net):\n",
-    "        super().__init__()\n",
-    "        self.encoder_net = encoder_net\n",
-    "\n",
-    "    def forward(self, x):\n",
-    "        mean, log_std = torch.chunk(self.encoder_net(x), 2, dim=-1)\n",
-    "        log_std = torch.clamp(log_std, min=-10.0, max=10.0)\n",
-    "        return td.Independent(td.Normal(mean, torch.exp(log_std)), 1)\n",
-    "\n",
-    "class BernoulliDecoder(nn.Module):\n",
-    "    def __init__(self, decoder_net):\n",
-    "        super().__init__()\n",
-    "        self.decoder_net = decoder_net\n",
-    "\n",
-    "    def forward(self, z):\n",
-    "        logits = self.decoder_net(z)\n",
-    "        return td.Independent(td.Bernoulli(logits=logits), 2)\n",
-    "\n",
-    "class VAE(nn.Module):\n",
-    "    def __init__(self, prior, decoder, encoder):\n",
-    "        super().__init__()\n",
-    "        self.prior = prior\n",
-    "        self.decoder = decoder\n",
-    "        self.encoder = encoder\n",
-    "\n",
-    "\n",
-    "\n",
-    "def plot_flow_contours(prior, model, loader, lim=20):\n",
-    "    prior.eval()\n",
-    "    model.eval()\n",
-    "    xs = torch.linspace(-lim, lim, 200)\n",
-    "    ys = torch.linspace(-lim, lim, 200)\n",
-    "    X, Y = torch.meshgrid(xs, ys, indexing=\"xy\")\n",
-    "    pts = torch.stack([X.reshape(-1), Y.reshape(-1)], dim=1).to(device)\n",
-    "    with torch.no_grad():\n",
-    "        logp = prior.log_prob(pts).reshape(200, 200).cpu()\n",
-    "    zs, labs = [], []\n",
-    "    with torch.no_grad():\n",
-    "        for x, y in loader:\n",
-    "            x = x.to(device)\n",
-    "            zs.append(model.encoder(x).base_dist.loc.cpu())\n",
-    "            labs.append(y)\n",
-    "            if len(torch.cat(zs)) >= 3000: break\n",
-    "    Z = torch.cat(zs)[:3000].numpy()\n",
-    "    L = torch.cat(labs)[:3000].numpy()\n",
-    "    plt.figure(figsize=(7, 6))\n",
-    "    plt.contour(X.numpy(), Y.numpy(), logp.numpy(), levels=15)\n",
-    "    plt.scatter(Z[:, 0], Z[:, 1], c=L, cmap=\"tab10\", s=10, alpha=0.6)\n",
-    "    plt.title(\"Flow Prior Contours & Aggregate Posterior\")\n",
-    "    plt.xlabel(\"z1\"); plt.ylabel(\"z2\")\n",
-    "    plt.savefig(\"figs/flow_contour.png\")\n",
-    "\n",
-    "def show_reconstructions(model, loader, n=10):\n",
-    "    model.eval()\n",
-    "    x, _ = next(iter(loader))\n",
-    "    x = x[:n].to(device)\n",
-    "    with torch.no_grad():\n",
-    "        z = model.encoder(x).rsample()\n",
-    "        x_hat = (model.decoder(z).mean >= 0.5).float().cpu()\n",
-    "    plt.figure(figsize=(2*n, 3))\n",
-    "    for i in range(n):\n",
-    "        plt.subplot(2, n, i + 1)\n",
-    "        plt.imshow(x[i].cpu().squeeze(), cmap=\"gray\")\n",
-    "        plt.axis(\"off\")\n",
-    "        plt.subplot(2, n, n + i + 1)\n",
-    "        plt.imshow(x_hat[i].squeeze(), cmap=\"gray\")\n",
-    "        plt.axis(\"off\")\n",
-    "    plt.savefig(\"figs/flow_reconstructions.png\")\n",
-    "\n",
-    "# \n",
-    "\n",
-    "if __name__ == \"__main__\":\n",
-    "    scores = []\n",
-    "    for run in range(N_RUNS):\n",
-    "        print(f\"Run {run+1}/{N_RUNS}...\")\n",
-    "        fp = FlowPrior(dim=M, n_layers=6).to(device)\n",
-    "        enc = GaussianEncoder(nn.Sequential(\n",
-    "            nn.Flatten(), nn.Linear(784, 512), nn.ReLU(),\n",
-    "            nn.Linear(512, 512), nn.ReLU(), nn.Linear(512, M * 2)\n",
-    "        )).to(device)\n",
-    "        dec = BernoulliDecoder(nn.Sequential(\n",
-    "            nn.Linear(M, 512), nn.ReLU(), nn.Linear(512, 512), nn.ReLU(),\n",
-    "            nn.Linear(512, 784), nn.Unflatten(-1, (28, 28))\n",
-    "        )).to(device)\n",
-    "        m = VAE(fp, dec, enc).to(device)\n",
-    "        opt = torch.optim.Adam(m.parameters(), lr=1e-3)\n",
-    "\n",
-    "        m.train()\n",
-    "        for epoch in range(EPOCHS):\n",
-    "            beta = min(1.0, (epoch + 1) / 15.0)\n",
-    "            for x, _ in train_loader:\n",
-    "                x = x.to(device)\n",
-    "                opt.zero_grad(set_to_none=True)\n",
-    "                q = m.encoder(x)\n",
-    "                z = q.rsample()\n",
-    "                log_px = m.decoder(z).log_prob(x)\n",
-    "                kl = q.log_prob(z) - m.prior.log_prob(z)\n",
-    "                loss = -torch.mean(log_px - beta * kl)\n",
-    "                loss.backward()\n",
-    "                torch.nn.utils.clip_grad_norm_(m.parameters(), 1.0)\n",
-    "                opt.step()\n",
-    "\n",
-    "        m.eval()\n",
-    "        run_elbos = []\n",
-    "        with torch.no_grad():\n",
-    "            for x, _ in test_loader:\n",
-    "                x = x.to(device)\n",
-    "                q = m.encoder(x)\n",
-    "                z = q.rsample()\n",
-    "                elbo = torch.mean(m.decoder(z).log_prob(x) - (q.log_prob(z) - m.prior.log_prob(z)))\n",
-    "                run_elbos.append(elbo.item())\n",
-    "        scores.append(np.mean(run_elbos))\n",
-    "        print(f\"Test ELBO: {scores[-1]:.4f}\")\n",
-    "\n",
-    "    print(f\"\\nFinal Test ELBO: {np.mean(scores):.4f} ± {np.std(scores):.4f}\")\n",
-    "    torch.save(m.state_dict(), \"models/VAE_FlowPrior.pt\")\n",
-    "    plot_flow_contours(fp, m, test_loader)\n",
-    "    show_reconstructions(m, test_loader)"
-   ]
-  }
- ],
- "metadata": {
-  "kernelspec": {
-   "display_name": "Python [conda env:base] *",
-   "language": "python",
-   "name": "conda-base-py"
-  },
-  "language_info": {
-   "codemirror_mode": {
-    "name": "ipython",
-    "version": 3
-   },
-   "file_extension": ".py",
-   "mimetype": "text/x-python",
-   "name": "python",
-   "nbconvert_exporter": "python",
-   "pygments_lexer": "ipython3",
-   "version": "3.13.5"
-  }
- },
- "nbformat": 4,
- "nbformat_minor": 5
-}
+import os
+import numpy as np
+import torch
+import torch.nn as nn
+import torch.distributions as td
+from torch.utils.data import DataLoader
+from torchvision import datasets, transforms
+import matplotlib.pyplot as plt
+
+# ===============================
+# Setup
+# ===============================
+
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+M = 2
+BATCH_SIZE = 256
+N_RUNS = 10
+EPOCHS = 50
+THRESHOLD = 0.5
+
+os.makedirs("models", exist_ok=True)
+os.makedirs("figs", exist_ok=True)
+
+# ===============================
+# Dataset
+# ===============================
+
+transform = transforms.Compose([
+    transforms.ToTensor(),
+    transforms.Lambda(lambda x: (x > THRESHOLD).float().squeeze())
+])
+
+train_loader = DataLoader(
+    datasets.MNIST("data/", train=True, download=True, transform=transform),
+    batch_size=BATCH_SIZE,
+    shuffle=True
+)
+
+test_loader = DataLoader(
+    datasets.MNIST("data/", train=False, download=True, transform=transform),
+    batch_size=BATCH_SIZE,
+    shuffle=False
+)
+
+# ===============================
+# Flow Components
+# ===============================
+
+class CouplingLayer(nn.Module):
+
+    def __init__(self, dim, mask):
+        super().__init__()
+
+        self.register_buffer("mask", mask)
+
+        self.scale_net = nn.Sequential(
+            nn.Linear(dim, 64),
+            nn.ReLU(),
+            nn.Linear(64, 64),
+            nn.ReLU(),
+            nn.Linear(64, dim),
+            nn.Tanh()
+        )
+
+        self.shift_net = nn.Sequential(
+            nn.Linear(dim, 64),
+            nn.ReLU(),
+            nn.Linear(64, 64),
+            nn.ReLU(),
+            nn.Linear(64, dim)
+        )
+
+    def forward(self, z):
+
+        z_masked = z * self.mask
+
+        s = self.scale_net(z_masked) * (1 - self.mask)
+        t = self.shift_net(z_masked) * (1 - self.mask)
+
+        z_out = z_masked + (1 - self.mask) * (z * torch.exp(s) + t)
+
+        log_det = (s * (1 - self.mask)).sum(dim=-1)
+
+        return z_out, log_det
+
+
+class FlowPrior(nn.Module):
+
+    def __init__(self, dim=2, n_layers=6):
+
+        super().__init__()
+
+        self.dim = dim
+
+        masks = []
+
+        for i in range(n_layers):
+
+            m = torch.zeros(dim)
+            m[:dim // 2] = 1.0
+
+            if i % 2 == 1:
+                m = 1 - m
+
+            masks.append(m)
+
+        self.layers = nn.ModuleList(
+            [CouplingLayer(dim, m) for m in masks]
+        )
+
+        self.base = td.Independent(
+            td.Normal(torch.zeros(dim), torch.ones(dim)), 1
+        )
+
+    def log_prob(self, z):
+
+        log_det_total = torch.zeros(z.shape[0], device=z.device)
+
+        u = z
+
+        for layer in reversed(self.layers):
+
+            mask = layer.mask.to(z.device)
+
+            u_masked = u * mask
+
+            s = layer.scale_net(u_masked) * (1 - mask)
+            t = layer.shift_net(u_masked) * (1 - mask)
+
+            u = u_masked + (1 - mask) * ((u - t) * torch.exp(-s))
+
+            log_det_total -= (s * (1 - mask)).sum(dim=-1)
+
+        return self.base.log_prob(u) + log_det_total
+
+    def sample(self, n):
+
+        u = self.base.sample((n,)).to(next(self.parameters()).device)
+
+        z = u
+
+        for layer in self.layers:
+
+            mask = layer.mask
+
+            z_masked = z * mask
+
+            s = layer.scale_net(z_masked) * (1 - mask)
+            t = layer.shift_net(z_masked) * (1 - mask)
+
+            z = z_masked + (1 - mask) * (z * torch.exp(s) + t)
+
+        return z
+
+
+# ===============================
+# Encoder / Decoder
+# ===============================
+
+class GaussianEncoder(nn.Module):
+
+    def __init__(self, encoder_net):
+        super().__init__()
+        self.encoder_net = encoder_net
+
+    def forward(self, x):
+
+        mean, log_std = torch.chunk(self.encoder_net(x), 2, dim=-1)
+
+        log_std = torch.clamp(log_std, -10.0, 10.0)
+
+        return td.Independent(
+            td.Normal(mean, torch.exp(log_std)), 1
+        )
+
+
+class BernoulliDecoder(nn.Module):
+
+    def __init__(self, decoder_net):
+        super().__init__()
+        self.decoder_net = decoder_net
+
+    def forward(self, z):
+
+        logits = self.decoder_net(z)
+
+        return td.Independent(
+            td.Bernoulli(logits=logits), 2
+        )
+
+
+# ===============================
+# VAE
+# ===============================
+
+class VAE(nn.Module):
+
+    def __init__(self, prior, decoder, encoder):
+
+        super().__init__()
+
+        self.prior = prior
+        self.decoder = decoder
+        self.encoder = encoder
+
+    def elbo_loss(self, x, beta=1.0):
+
+        q = self.encoder(x)
+
+        z = q.rsample()
+
+        log_px = self.decoder(z).log_prob(x)
+
+        kl = q.log_prob(z) - self.prior.log_prob(z)
+
+        elbo = log_px - beta * kl
+
+        loss = -torch.mean(elbo)
+
+        return loss, torch.mean(elbo)
+
+
+# ===============================
+# Plotting
+# ===============================
+
+def plot_flow_contours(prior, model, loader, lim=20):
+
+    prior.eval()
+    model.eval()
+
+    xs = torch.linspace(-lim, lim, 200)
+    ys = torch.linspace(-lim, lim, 200)
+
+    X, Y = torch.meshgrid(xs, ys, indexing="xy")
+
+    pts = torch.stack([X.reshape(-1), Y.reshape(-1)], dim=1).to(device)
+
+    with torch.no_grad():
+        logp = prior.log_prob(pts).reshape(200, 200).cpu()
+
+    zs, labs = [], []
+
+    with torch.no_grad():
+
+        for x, y in loader:
+
+            x = x.to(device)
+
+            zs.append(model.encoder(x).base_dist.loc.cpu())
+            labs.append(y)
+
+            if len(torch.cat(zs)) >= 3000:
+                break
+
+    Z = torch.cat(zs)[:3000].numpy()
+    L = torch.cat(labs)[:3000].numpy()
+
+    plt.figure(figsize=(7,6))
+
+    plt.contour(X.numpy(), Y.numpy(), logp.numpy(), levels=15)
+
+    plt.scatter(Z[:,0], Z[:,1], c=L, cmap="tab10", s=10, alpha=0.6)
+
+    plt.title("Flow Prior & Aggregate Posterior")
+
+    plt.savefig("figs/flow_contour.png")
+
+
+def show_reconstructions(model, loader, n=10):
+
+    model.eval()
+
+    x, _ = next(iter(loader))
+
+    x = x[:n].to(device)
+
+    with torch.no_grad():
+
+        z = model.encoder(x).rsample()
+
+        x_hat = (model.decoder(z).mean >= 0.5).float().cpu()
+
+    plt.figure(figsize=(2*n,3))
+
+    for i in range(n):
+
+        plt.subplot(2,n,i+1)
+        plt.imshow(x[i].cpu(), cmap="gray")
+        plt.axis("off")
+
+        plt.subplot(2,n,n+i+1)
+        plt.imshow(x_hat[i], cmap="gray")
+        plt.axis("off")
+
+    plt.savefig("figs/flow_reconstruction.png")
+
+
+# ===============================
+# Training
+# ===============================
+
+def train():
+
+    scores = []
+
+    for run in range(N_RUNS):
+
+        print(f"Run {run+1}/{N_RUNS}")
+
+        fp = FlowPrior(dim=M, n_layers=6).to(device)
+
+        enc = GaussianEncoder(
+            nn.Sequential(
+                nn.Flatten(),
+                nn.Linear(784,512),
+                nn.ReLU(),
+                nn.Linear(512,512),
+                nn.ReLU(),
+                nn.Linear(512, M*2)
+            )
+        ).to(device)
+
+        dec = BernoulliDecoder(
+            nn.Sequential(
+                nn.Linear(M,512),
+                nn.ReLU(),
+                nn.Linear(512,512),
+                nn.ReLU(),
+                nn.Linear(512,784),
+                nn.Unflatten(-1,(28,28))
+            )
+        ).to(device)
+
+        model = VAE(fp, dec, enc).to(device)
+
+        optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
+
+        model.train()
+
+        for epoch in range(EPOCHS):
+
+            beta = min(1.0, (epoch+1)/15)
+
+            for x,_ in train_loader:
+
+                x = x.to(device)
+
+                optimizer.zero_grad()
+
+                loss,_ = model.elbo_loss(x, beta)
+
+                loss.backward()
+
+                torch.nn.utils.clip_grad_norm_(model.parameters(),1.0)
+
+                optimizer.step()
+
+        # evaluation
+
+        model.eval()
+
+        run_elbos = []
+
+        with torch.no_grad():
+
+            for x,_ in test_loader:
+
+                x = x.to(device)
+
+                _,elbo = model.elbo_loss(x)
+
+                run_elbos.append(elbo.item())
+
+        score = np.mean(run_elbos)
+
+        scores.append(score)
+
+        print("Test ELBO:", score)
+
+    print("\nFinal ELBO:", np.mean(scores), "±", np.std(scores))
+
+    torch.save(model.state_dict(), "models/VAE_FlowPrior.pt")
+
+    plot_flow_contours(fp, model, test_loader)
+
+    show_reconstructions(model, test_loader)
+
+
+# ===============================
+# Main
+# ===============================
+
+if __name__ == "__main__":
+    train()
