@@ -19,15 +19,20 @@ class GaussianPrior(BasePrior):
 
     def __init__(self, dim):
         super().__init__()
-        self.base = td.Independent(
-            td.Normal(torch.zeros(dim), torch.ones(dim)), 1
+
+        self.register_buffer("loc", torch.zeros(dim))
+        self.register_buffer("scale", torch.ones(dim))
+
+    def _dist(self):
+        return td.Independent(
+            td.Normal(self.loc, self.scale), 1
         )
 
     def log_prob(self, z):
-        return self.base.log_prob(z)
+        return self._dist().log_prob(z)
 
     def sample(self, n):
-        return self.base.sample((n,))
+        return self._dist().sample((n,))
 
 class MoGPrior(BasePrior):
 
