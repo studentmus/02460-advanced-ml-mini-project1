@@ -54,17 +54,15 @@ class GaussianEncoder(nn.Module):
         return td.Independent(td.Normal(mean, torch.exp(log_std)), 1)
 
 
-class GaussianDecoder(nn.Module):
+class BernoulliDecoder(nn.Module):
     def __init__(self, decoder_net):
         super().__init__()
         self.decoder_net = decoder_net
 
     def forward(self, z):
-        params = self.decoder_net(z)               # (B, 2, 28, 28)
-        mu, log_var = torch.chunk(params, 2, dim=1)
+        logits = self.decoder_net(z)
+        return td.Independent(td.Bernoulli(logits=logits), 2)
 
-        sigma = torch.exp(0.5 * log_var)
-        return td.Independent(td.Normal(loc=mu, scale=sigma), 3)
 
 class VAE(nn.Module):
     def __init__(self, prior, decoder, encoder):
@@ -191,7 +189,8 @@ def show_reconstructions(model, loader, n=10, thr=0.5):
 
     with torch.no_grad():
         z = model.encoder(x).rsample()
-        xhat = model.decoder(z).mean
+        probs = model.decoder(z).mean
+        xhat = (probs >= thr).float()
 
     x = x.cpu()
     xhat = xhat.cpu()
@@ -227,7 +226,10 @@ def evaluate_elbo(model, device):
 
 if __name__ == "__main__":
     threshold = 0.5
-    transform = transforms.ToTensor()
+    transform = transforms.Compose([
+        transforms.ToTensor(),
+        transforms.Lambda(lambda x: (x > threshold).float().squeeze())
+    ])
 
     train_loader = DataLoader(
         datasets.MNIST("data/", train=True, download=True, transform=transform),
@@ -241,7 +243,7 @@ if __name__ == "__main__":
 
     elbos = []
 
-    for i in range(0):
+    for i in range(10):
         M = 2
         K = 10
 
@@ -263,12 +265,12 @@ if __name__ == "__main__":
             nn.ReLU(),
             nn.Linear(512, 512),
             nn.ReLU(),
-            nn.Linear(512, 2*784),
-            nn.Unflatten(-1, (2, 28, 28))
+            nn.Linear(512, 784),
+            nn.Unflatten(-1, (28, 28))
         )
 
         encoder = GaussianEncoder(encoder_net)
-        decoder = GaussianDecoder(decoder_net)
+        decoder = BernoulliDecoder(decoder_net)
         model = VAE(prior, decoder, encoder).to(device)
 
         optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
@@ -282,12 +284,13 @@ if __name__ == "__main__":
 
         if 10 - i == 1:
             os.makedirs("models", exist_ok=True)
-            torch.save(model.state_dict(), "models/VAE_MoG_Gaussian_likelihood.pt")
+            torch.save(model.state_dict(), "models/VAE_MoG_not_trainable_prior.pt")
 
     elbos = np.array(elbos)
 
     mean = elbos.mean()
     std = elbos.std(ddof=1)  # sample standard deviation
     print(f"The mean and standard deviation of elbos among {10}: {mean} and {std}")
+
     # plot_mog_contours(prior, model, test_loader, use_mean=False)
     # show_reconstructions(model, test_loader, n=10, thr=0.5)
