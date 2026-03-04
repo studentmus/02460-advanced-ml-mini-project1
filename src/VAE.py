@@ -344,7 +344,7 @@ def main():
         decoder = BernoulliDecoder(decoder_net).to(device)
 
         # ---- MODEL ----
-        model = VAE(prior, decoder, encoder).to(device)
+        model = VAE(prior, encoder, decoder).to(device)
 
         optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
         # ---- training ----
