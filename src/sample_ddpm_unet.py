@@ -1,3 +1,4 @@
+import os
 import time
 import argparse
 import torch
@@ -8,17 +9,22 @@ def main():
     parser = argparse.ArgumentParser(description="Sample from trained DDPM")
     parser.add_argument("--num_samples", type=int, default=4, 
                         help="Number of images to generate (default: 4 for the project requirement)")
+    parser.add_argument("--weights_dir", type=str, default="weights", 
+                        help="Directory containing the model weights")
+    
     args = parser.parse_args()
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
+    print(f"Looking for weights in directory: {args.weights_dir}")
 
     unet = Unet().to(device)
     ddpm = DDPM(network=unet, T=1000).to(device)
 
-    weights_path = "weights/trained_ddpm_mnist_100epochs.pth"
+    weights_path = os.path.join(args.weights_dir, "trained_ddpm_mnist_100epochs.pth")
+    
     try:
-        ddpm.load_state_dict(torch.load(weights_path, map_location=device))
+        ddpm.load_state_dict(torch.load(weights_path, map_location=device, weights_only=True))
         print(f"Loaded weights from {weights_path}")
     except FileNotFoundError:
         print(f"Error: Could not find {weights_path}. Please run train_ddpm.py first.")
@@ -36,7 +42,7 @@ def main():
         torch.cuda.synchronize()
     start_time = time.time()
     
-    with torch.no_grad(): # Added no_grad() as best practice for inference
+    with torch.no_grad():
         samples = ddpm.sample(sample_shape)
     
     # Synchronize and stop timer

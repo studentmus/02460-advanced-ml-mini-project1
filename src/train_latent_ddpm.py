@@ -12,11 +12,14 @@ def main():
     parser.add_argument("--beta", type=float, default=1e-6, help="Beta value for VAE")
     parser.add_argument("--vae_epochs", type=int, default=100, help="Epochs to train VAE")
     parser.add_argument("--ddpm_epochs", type=int, default=50, help="Epochs to train Latent DDPM")
+    parser.add_argument("--weights_dir", type=str, default="weights", help="Directory to save the model weights")
+    
     args = parser.parse_args()
 
-    os.makedirs("weights_100vae50ddpm", exist_ok=True)
+    os.makedirs(args.weights_dir, exist_ok=True)
+    
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"Using device: {device} | Beta: {args.beta}")
+    print(f"Using device: {device} | Beta: {args.beta} | Saving weights to: {args.weights_dir}")
 
     transform = transforms.Compose([
         transforms.ToTensor(), 
@@ -29,7 +32,7 @@ def main():
     b_vae = BetaVAE(latent_dim=latent_dim).to(device)
     latent_net = LatentMLP(latent_dim=latent_dim).to(device)
     latent_ddpm = DDPM(network=latent_net, T=1000).to(device)
-
+    
     # --- PHASE 1: Train Beta-VAE ---
     print(f"\n--- Training Beta-VAE (beta={args.beta}) ---")
     optimizer_vae = optim.Adam(b_vae.parameters(), lr=1e-3)
@@ -81,12 +84,12 @@ def main():
             
         print(f"DDPM Epoch {epoch+1} Average Loss: {total_loss/len(dataloader):.4f}")
 
-    # Save weights with beta value in filename
-    torch.save(b_vae.state_dict(), f"weights_100vae50ddpm/b_vae_beta_{args.beta}.pth")
-    torch.save(latent_ddpm.state_dict(), f"weights_100vae50ddpm/latent_ddpm_beta_{args.beta}.pth")
-    print("Training complete and weights saved!")
+    vae_save_path = os.path.join(args.weights_dir, f"b_vae_beta_{args.beta}.pth")
+    ddpm_save_path = os.path.join(args.weights_dir, f"latent_ddpm_beta_{args.beta}.pth")
+
+    torch.save(b_vae.state_dict(), vae_save_path)
+    torch.save(latent_ddpm.state_dict(), ddpm_save_path)
+    print(f"Training complete! Weights saved to {args.weights_dir}")
 
 if __name__ == "__main__":
     main()
-
-

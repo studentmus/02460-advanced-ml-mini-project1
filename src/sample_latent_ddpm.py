@@ -8,23 +8,29 @@ from ddpm_models import BetaVAE, LatentMLP, DDPM
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--beta", type=float, default=1e-6, help="Beta value of the model to load")
-    parser.add_argument("--num_samples", type=int, default=4, help="Number of images to generate (default: 4)")
+    parser.add_argument("--num_samples", type=int, default=4, help="Number of images to generate (default: 4)")    
+    parser.add_argument("--weights_dir", type=str, default="weights", help="Directory containing the model weights")
+    parser.add_argument("--output_dir", type=str, default="samples", help="Directory to save the generated samples")
+    
     args = parser.parse_args()
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device} | Loading models for Beta: {args.beta}")
+    print(f"Looking for weights in directory: {args.weights_dir}")
 
     latent_dim = 2
     b_vae = BetaVAE(latent_dim=latent_dim).to(device)
     latent_net = LatentMLP(latent_dim=latent_dim).to(device)
     latent_ddpm = DDPM(network=latent_net, T=1000).to(device)
 
-    # Load weights
+    vae_path = os.path.join(args.weights_dir, f"b_vae_beta_{args.beta}.pth")
+    ddpm_path = os.path.join(args.weights_dir, f"latent_ddpm_beta_{args.beta}.pth")
+
     try:
-        b_vae.load_state_dict(torch.load(f"weights_100vae50ddpm/b_vae_beta_{args.beta}.pth", map_location=device))
-        latent_ddpm.load_state_dict(torch.load(f"weights_100vae50ddpm/latent_ddpm_beta_{args.beta}.pth", map_location=device))
+        b_vae.load_state_dict(torch.load(vae_path, map_location=device, weights_only=True))
+        latent_ddpm.load_state_dict(torch.load(ddpm_path, map_location=device, weights_only=True))
     except FileNotFoundError:
-        print("Weights not found. Please run train_latent_ddpm.py first with the matching --beta argument.")
+        print(f"Weights not found in {args.weights_dir}. Please run train_latent_ddpm.py first with the matching --beta argument.")
         return
 
     b_vae.eval()
@@ -74,11 +80,10 @@ def main():
     plt.suptitle(f"Latent DDPM (Beta={args.beta})")
     plt.tight_layout()
     
-    output_dir = "samples_2_100vae50ddpm"
-    os.makedirs(output_dir, exist_ok=True)
+    os.makedirs(args.output_dir, exist_ok=True)
 
     filename = f"latent_ddpm_samples_beta_{args.beta}.png"
-    save_path = os.path.join(output_dir, filename)
+    save_path = os.path.join(args.output_dir, filename)
 
     plt.savefig(save_path, bbox_inches='tight', dpi=300)
     print(f"Saved generated images to {save_path}")
