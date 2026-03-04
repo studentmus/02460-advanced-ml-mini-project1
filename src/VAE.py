@@ -303,54 +303,50 @@ def main():
 
     M = args.latent_dim
 
-    encoder_net = nn.Sequential(
-        nn.Flatten(),
-        nn.Linear(784, 512),
-        nn.ReLU(),
-        nn.Linear(512, 512),
-        nn.ReLU(),
-        nn.Linear(512, M * 2)
-    )
-
-    decoder_net = nn.Sequential(
-        nn.Linear(M, 512),
-        nn.ReLU(),
-        nn.Linear(512, 512),
-        nn.ReLU(),
-        nn.Linear(512, 784),
-        nn.Unflatten(-1, (28, 28))
-    )
-
-    encoder = GaussianEncoder(encoder_net)
-    decoder = BernoulliDecoder(decoder_net)
-
-    # -------------------------
-    # Training runs
-    # -------------------------
-
     elbos = []
 
     for run in range(args.runs):
 
-        print(f"\nRun {run+1}/{args.runs}")
+        print(f"\nRun {run + 1}/{args.runs}")
 
-        # ---- build prior ----
+        # ---- PRIOR ----
         if args.prior == "gaussian":
             prior = GaussianPrior(M)
-
         elif args.prior == "mog":
             prior = MoGPrior(M, args.k)
-
         elif args.prior == "flow":
             prior = FlowPrior(M)
+        else:
+            raise ValueError(f"Unknown prior: {args.prior}")
 
         prior = prior.to(device)
 
-        # ---- build model ----
+        # ---- NETWORKS (RECREATE EVERY RUN) ----
+        encoder_net = nn.Sequential(
+            nn.Flatten(),
+            nn.Linear(784, 512),
+            nn.ReLU(),
+            nn.Linear(512, 512),
+            nn.ReLU(),
+            nn.Linear(512, M * 2)
+        ).to(device)
+
+        decoder_net = nn.Sequential(
+            nn.Linear(M, 512),
+            nn.ReLU(),
+            nn.Linear(512, 512),
+            nn.ReLU(),
+            nn.Linear(512, 784),
+            nn.Unflatten(-1, (28, 28))
+        ).to(device)
+
+        encoder = GaussianEncoder(encoder_net).to(device)
+        decoder = BernoulliDecoder(decoder_net).to(device)
+
+        # ---- MODEL ----
         model = VAE(prior, decoder, encoder).to(device)
 
         optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
-
         # ---- training ----
         model.train()
 
