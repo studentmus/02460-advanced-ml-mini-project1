@@ -5,16 +5,16 @@ import torch.optim as optim
 from torchvision import datasets, transforms
 from torch.utils.data import DataLoader
 from ddpm_models import BetaVAE, LatentMLP, DDPM
-from tqdm import tqdm  # <-- 1. Import tqdm
+from tqdm import tqdm
 
 def main():
     parser = argparse.ArgumentParser(description="Train Latent DDPM")
     parser.add_argument("--beta", type=float, default=1e-6, help="Beta value for VAE")
-    parser.add_argument("--vae_epochs", type=int, default=50, help="Epochs to train VAE")
-    parser.add_argument("--ddpm_epochs", type=int, default=35, help="Epochs to train Latent DDPM")
+    parser.add_argument("--vae_epochs", type=int, default=100, help="Epochs to train VAE")
+    parser.add_argument("--ddpm_epochs", type=int, default=50, help="Epochs to train Latent DDPM")
     args = parser.parse_args()
 
-    os.makedirs("weights", exist_ok=True)
+    os.makedirs("weights_100vae50ddpm", exist_ok=True)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device} | Beta: {args.beta}")
 
@@ -37,7 +37,7 @@ def main():
     
     for epoch in range(args.vae_epochs):
         total_loss = 0
-        # <-- 2. Wrap dataloader in tqdm for Phase 1
+        
         pbar = tqdm(dataloader, desc=f"VAE Epoch {epoch+1}/{args.vae_epochs}")
         
         for batch_x, _ in pbar:
@@ -45,13 +45,12 @@ def main():
             optimizer_vae.zero_grad()
             recon_x, mu, logvar = b_vae(batch_x)
             
-            # Note: Ensure your b_vae.loss_function expects exactly these arguments!
             loss = b_vae.loss_function(recon_x, batch_x, mu, logvar, beta=args.beta)
             loss.backward()
             optimizer_vae.step()
             
             total_loss += loss.item()
-            pbar.set_postfix({'loss': f"{loss.item():.4f}"}) # <-- Updates the bar with live loss
+            pbar.set_postfix({'loss': f"{loss.item():.4f}"})
             
         print(f"VAE Epoch {epoch+1} Average Loss: {total_loss/len(dataloader):.4f}")
 
@@ -63,7 +62,7 @@ def main():
     
     for epoch in range(args.ddpm_epochs):
         total_loss = 0
-        # <-- 3. Wrap dataloader in tqdm for Phase 2
+        
         pbar = tqdm(dataloader, desc=f"DDPM Epoch {epoch+1}/{args.ddpm_epochs}")
         
         for batch_x, _ in pbar:
@@ -78,14 +77,16 @@ def main():
             optimizer_ddpm.step()
             
             total_loss += loss.item()
-            pbar.set_postfix({'loss': f"{loss.item():.4f}"}) # <-- Updates the bar with live loss
+            pbar.set_postfix({'loss': f"{loss.item():.4f}"})
             
         print(f"DDPM Epoch {epoch+1} Average Loss: {total_loss/len(dataloader):.4f}")
 
     # Save weights with beta value in filename
-    torch.save(b_vae.state_dict(), f"weights/b_vae_beta_{args.beta}.pth")
-    torch.save(latent_ddpm.state_dict(), f"weights/latent_ddpm_beta_{args.beta}.pth")
+    torch.save(b_vae.state_dict(), f"weights_100vae50ddpm/b_vae_beta_{args.beta}.pth")
+    torch.save(latent_ddpm.state_dict(), f"weights_100vae50ddpm/latent_ddpm_beta_{args.beta}.pth")
     print("Training complete and weights saved!")
 
 if __name__ == "__main__":
     main()
+
+

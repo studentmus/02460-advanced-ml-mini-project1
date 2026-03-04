@@ -7,18 +7,18 @@ class Unet(nn.Module):
         super().__init__()
         chs = [32, 64, 128, 256, 256]
         self._convs = torch.nn.ModuleList([
-            torch.nn.Sequential(torch.nn.Conv2d(2, chs[0], kernel_size=3, padding=1), torch.nn.LogSigmoid()),
-            torch.nn.Sequential(torch.nn.MaxPool2d(2), torch.nn.Conv2d(chs[0], chs[1], kernel_size=3, padding=1), torch.nn.LogSigmoid()),
-            torch.nn.Sequential(torch.nn.MaxPool2d(2), torch.nn.Conv2d(chs[1], chs[2], kernel_size=3, padding=1), torch.nn.LogSigmoid()),
-            torch.nn.Sequential(torch.nn.MaxPool2d(2, stride=2, padding=1), torch.nn.Conv2d(chs[2], chs[3], kernel_size=3, padding=1), torch.nn.LogSigmoid()),
-            torch.nn.Sequential(torch.nn.MaxPool2d(2), torch.nn.Conv2d(chs[3], chs[4], kernel_size=3, padding=1), torch.nn.LogSigmoid()),
+            torch.nn.Sequential(torch.nn.Conv2d(2, chs[0], kernel_size=3, padding=1), torch.nn.SiLU()),
+            torch.nn.Sequential(torch.nn.MaxPool2d(2), torch.nn.Conv2d(chs[0], chs[1], kernel_size=3, padding=1), torch.nn.SiLU()),
+            torch.nn.Sequential(torch.nn.MaxPool2d(2), torch.nn.Conv2d(chs[1], chs[2], kernel_size=3, padding=1), torch.nn.SiLU()),
+            torch.nn.Sequential(torch.nn.MaxPool2d(2, stride=2, padding=1), torch.nn.Conv2d(chs[2], chs[3], kernel_size=3, padding=1), torch.nn.SiLU()),
+            torch.nn.Sequential(torch.nn.MaxPool2d(2), torch.nn.Conv2d(chs[3], chs[4], kernel_size=3, padding=1), torch.nn.SiLU()),
         ])
         self._tconvs = torch.nn.ModuleList([
-            torch.nn.Sequential(torch.nn.ConvTranspose2d(chs[4], chs[3], 3, 2, 1, 1), torch.nn.LogSigmoid()),
-            torch.nn.Sequential(torch.nn.ConvTranspose2d(chs[3]*2, chs[2], 3, 2, 1, 0), torch.nn.LogSigmoid()),
-            torch.nn.Sequential(torch.nn.ConvTranspose2d(chs[2]*2, chs[1], 3, 2, 1, 1), torch.nn.LogSigmoid()),
-            torch.nn.Sequential(torch.nn.ConvTranspose2d(chs[1]*2, chs[0], 3, 2, 1, 1), torch.nn.LogSigmoid()),
-            torch.nn.Sequential(torch.nn.Conv2d(chs[0]*2, chs[0], 3, padding=1), torch.nn.LogSigmoid(), torch.nn.Conv2d(chs[0], 1, 3, padding=1)),
+            torch.nn.Sequential(torch.nn.ConvTranspose2d(chs[4], chs[3], 3, 2, 1, 1), torch.nn.SiLU()),
+            torch.nn.Sequential(torch.nn.ConvTranspose2d(chs[3]*2, chs[2], 3, 2, 1, 0), torch.nn.SiLU()),
+            torch.nn.Sequential(torch.nn.ConvTranspose2d(chs[2]*2, chs[1], 3, 2, 1, 1), torch.nn.SiLU()),
+            torch.nn.Sequential(torch.nn.ConvTranspose2d(chs[1]*2, chs[0], 3, 2, 1, 1), torch.nn.SiLU()),
+            torch.nn.Sequential(torch.nn.Conv2d(chs[0]*2, chs[0], 3, padding=1), torch.nn.SiLU(), torch.nn.Conv2d(chs[0], 1, 3, padding=1)),
         ])
 
     def forward(self, x: torch.Tensor, t: torch.Tensor) -> torch.Tensor:

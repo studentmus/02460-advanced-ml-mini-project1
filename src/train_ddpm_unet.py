@@ -7,7 +7,6 @@ from tqdm import tqdm
 from ddpm_models import Unet, DDPM
 
 def main():
-    # Ensure weights directory exists
     os.makedirs("weights", exist_ok=True)
 
     transform = transforms.Compose([
@@ -18,7 +17,7 @@ def main():
 
     print("Loading Standard MNIST dataset...")
     mnist_train = datasets.MNIST(root='./data', train=True, download=True, transform=transform)
-    dataloader = DataLoader(mnist_train, batch_size=256, shuffle=True)
+    dataloader = DataLoader(mnist_train, batch_size=128, shuffle=True)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
@@ -27,7 +26,7 @@ def main():
     ddpm = DDPM(network=unet, T=1000).to(device)
 
     optimizer = optim.Adam(ddpm.parameters(), lr=2e-4)
-    epochs = 50 
+    epochs = 100 
     
     ddpm.train()
     print(f"Starting training for {epochs} epochs...")
@@ -49,7 +48,7 @@ def main():
 
         print(f"Epoch {epoch+1} Average Loss: {epoch_loss / len(dataloader):.4f}")
 
-    save_path = "weights/trained_ddpm_mnist.pth"
+    save_path = f"weights/trained_ddpm_mnist_{epochs}epochs.pth"
     torch.save(ddpm.state_dict(), save_path)
     print(f"Training complete! Model weights saved to {save_path}")
 
