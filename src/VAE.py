@@ -262,6 +262,121 @@ class BernoulliDecoder(nn.Module):
         logits = self.decoder_net(z)
         return td.Independent(td.Bernoulli(logits=logits), 2)
 
+def plot_latent_contours(prior, model, loader, device,
+                         lim=6, grid=300, levels=15,
+                         n_points=5000, use_mean=False,
+                         alpha=0.6, s=8):
+
+    prior.eval()
+    model.eval()
+
+    xs = torch.linspace(-lim, lim, grid, device=device)
+    ys = torch.linspace(-lim, lim, grid, device=device)
+
+    X, Y = torch.meshgrid(xs, ys, indexing="xy")
+    pts = torch.stack([X.reshape(-1), Y.reshape(-1)], dim=1)
+
+    # prior density
+    with torch.no_grad():
+        logp = prior.log_prob(pts).reshape(grid, grid).cpu()
+
+    zs = []
+    ys_lab = []
+    collected = 0
+
+    with torch.no_grad():
+
+        for x, y in loader:
+
+            x = x.to(device)
+
+            q = model.encoder(x)
+
+            if use_mean:
+                z = q.base_dist.loc
+            else:
+                z = q.rsample()
+
+            zs.append(z.cpu())
+            ys_lab.append(y)
+
+            collected += x.size(0)
+
+            if collected >= n_points:
+                break
+
+    Z = torch.cat(zs, dim=0)[:n_points].numpy()
+    Ylab = torch.cat(ys_lab, dim=0)[:n_points].numpy()
+
+    plt.figure(figsize=(7,6))
+
+    cs = plt.contour(
+        X.cpu().numpy(),
+        Y.cpu().numpy(),
+        logp.numpy(),
+        levels=levels
+    )
+
+    plt.clabel(cs, inline=True, fontsize=8)
+
+    sc = plt.scatter(
+        Z[:,0], Z[:,1],
+        c=Ylab,
+        cmap="tab10",
+        s=s,
+        alpha=alpha
+    )
+
+    plt.colorbar(sc, ticks=list(range(10)), label="Digit label")
+
+    # show MoG centers if available
+    if hasattr(prior, "mu"):
+        mu = prior.mu.detach().cpu().numpy()
+        plt.scatter(mu[:,0], mu[:,1], marker="x", s=80, color="black")
+
+    plt.title("Latent Space: Prior Contours + Encoded Samples")
+    plt.xlabel("z1")
+    plt.ylabel("z2")
+    plt.grid(True)
+
+    plt.savefig("figs/latent_contours.png")
+    plt.close()
+
+def show_reconstructions(model, loader, device, n=10, thr=0.5):
+
+    model.eval()
+
+    x, _ = next(iter(loader))
+    x = x[:n].to(device)
+
+    with torch.no_grad():
+
+        z = model.encoder(x).rsample()
+
+        probs = model.decoder(z).mean
+
+        xhat = (probs >= thr).float()
+
+    x = x.cpu()
+    xhat = xhat.cpu()
+
+    plt.figure(figsize=(2*n,3))
+
+    for i in range(n):
+
+        plt.subplot(2,n,i+1)
+        plt.imshow(x[i], cmap="gray", vmin=0, vmax=1)
+        plt.axis("off")
+
+        plt.subplot(2,n,n+i+1)
+        plt.imshow(xhat[i], cmap="gray", vmin=0, vmax=1)
+        plt.axis("off")
+
+    plt.suptitle("Top: Original | Bottom: Reconstruction")
+
+    plt.savefig("figs/reconstruction.png")
+    plt.close()
+
 def main():
 
     import argparse
@@ -280,6 +395,7 @@ def main():
     parser.add_argument("--epochs", type=int, default=100)
     parser.add_argument("--batch_size", type=int, default=256)
     parser.add_argument("--runs", type=int, default=10)
+    parser.add_argument("--samples", type=int, default=10)
 
     args = parser.parse_args()
 
@@ -417,8 +533,13 @@ def main():
     print("===================================")
 
     os.makedirs("models", exist_ok=True)
+    os.makedirs("figs", exist_ok=True)
 
     torch.save(model.state_dict(), f"models/VAE_{args.prior}.pt")
+
+    plot_latent_contours(prior, model, test_loader, device)
+
+    show_reconstructions(model, test_loader, device, args.samples)
 
 if __name__ == "__main__":
     main()
