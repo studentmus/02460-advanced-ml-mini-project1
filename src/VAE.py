@@ -311,11 +311,11 @@ def main():
 
         # ---- PRIOR ----
         if args.prior == "gaussian":
-            prior = GaussianPrior(M)
+            prior = GaussianPrior(M).to(device)
         elif args.prior == "mog":
-            prior = MoGPrior(M, args.k)
+            prior = MoGPrior(M, args.k).to(device)
         elif args.prior == "flow":
-            prior = FlowPrior(M)
+            prior = FlowPrior(M).to(device)
         else:
             raise ValueError(f"Unknown prior: {args.prior}")
 
