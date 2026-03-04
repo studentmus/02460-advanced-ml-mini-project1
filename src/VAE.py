@@ -263,7 +263,7 @@ def main():
 
     parser.add_argument("--latent_dim", type=int, default=2)
     parser.add_argument("--k", type=int, default=10)
-    parser.add_argument("--epochs", type=int, default=50)
+    parser.add_argument("--epochs", type=int, default=100)
     parser.add_argument("--batch_size", type=int, default=256)
     parser.add_argument("--runs", type=int, default=10)
 
