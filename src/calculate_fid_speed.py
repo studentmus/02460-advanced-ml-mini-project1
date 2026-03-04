@@ -61,8 +61,8 @@ def main():
             latent_net = LatentMLP(latent_dim=latent_dim).to(device)
             latent_ddpm = DDPM(network=latent_net, T=1000).to(device)
             
-            b_vae.load_state_dict(torch.load(f"weightsL20/b_vae_beta_{args.beta}.pth", map_location=device))
-            latent_ddpm.load_state_dict(torch.load(f"weightsL20/latent_ddpm_beta_{args.beta}.pth", map_location=device))
+            b_vae.load_state_dict(torch.load(f"weightsL20_100vae50ddpm/b_vae_beta_{args.beta}.pth", map_location=device))
+            latent_ddpm.load_state_dict(torch.load(f"weightsL20_100vae50ddpm/latent_ddpm_beta_{args.beta}.pth", map_location=device))
             b_vae.eval()
             latent_ddpm.eval()
 
