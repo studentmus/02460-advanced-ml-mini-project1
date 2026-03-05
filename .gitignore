@@ -11,6 +11,7 @@ venv/
 data/
 experiments/
 reports/build/
+models/
 *.log
 
 .vscode/
