@@ -339,7 +339,7 @@ def plot_latent_contours(prior, prior_name, model, loader, device,
     plt.ylabel("z2")
     plt.grid(True)
 
-    plt.savefig(f"figs/{prior_name}_latent_contours.png")
+    plt.savefig(f"samples/{prior_name}_latent_contours.png")
     plt.close()
 
 def show_reconstructions(model, loader, device, prior, n=10, thr=0.5):
@@ -365,15 +365,15 @@ def show_reconstructions(model, loader, device, prior, n=10, thr=0.5):
     for i in range(n):
 
         plt.subplot(2,n,i+1)
-        plt.imshow(x[i], cmap="gray", vmin=0, vmax=1)
+        plt.imshow(x[i].numpy(), cmap="gray", vmin=0, vmax=1)
         plt.axis("off")
 
         plt.subplot(2,n,n+i+1)
-        plt.imshow(xhat[i], cmap="gray", vmin=0, vmax=1)
+        plt.imshow(x[i].numpy(), cmap="gray", vmin=0, vmax=1)
         plt.axis("off")
 
     plt.suptitle("Top: Original | Bottom: Reconstruction")
-
+    plt.tight_layout()
     plt.savefig(f"samples/{prior}_reconstruction.png")
     plt.close()
 
@@ -475,7 +475,7 @@ def main():
 
         # ---- MODEL ----
         model = VAE(prior, encoder, decoder).to(device)
-
+        
         optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
         # ---- training ----
         model.train()
@@ -500,9 +500,9 @@ def main():
 
             print(f"Epoch {epoch+1}/{args.epochs} | Loss: {total_loss/len(train_loader):.4f}")
 
-        # -------------------------
+       # -------------------------
         # Evaluate ELBO
-        # -------------------------
+       # -------------------------
 
         model.eval()
 
